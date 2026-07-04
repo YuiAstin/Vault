@@ -52,6 +52,12 @@ extension/
 4. Browser extension communicates over localhost:7890 with a per-session auth token
 5. Clipboard writes use Win32 API with `ExcludeClipboardContentFromMonitorProcessing` flag (won't appear in Win+V history)
 
+## Windows SmartScreen Warning
+
+When you first run Vault, Windows Defender SmartScreen may show a warning like "Windows protected your PC." This is normal for any unsigned executable that hasn't built up download reputation yet. The binary is not code-signed (certificates cost money), so Windows doesn't recognize it.
+
+To proceed: click "More info" then "Run anyway." The source code is fully available here if you want to verify what you're running.
+
 ## Build
 
 ### Prerequisites
