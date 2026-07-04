@@ -1,0 +1,34 @@
+# Vault data (never commit)
+vault.enc
+.vault_salt
+vault.meta.json
+
+# Rust
+app/src-tauri/target/
+
+# Node
+app/node_modules/
+app/dist/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Build artifacts
+*.exe
+*.msi
+*.nsis
+
+# Python
+__pycache__/
+*.pyc
+
+# Temp
+gen_icons.py

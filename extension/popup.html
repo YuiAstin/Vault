@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 320px;
+      min-height: 200px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #1a1a2e;
+      color: #eaeaea;
+      padding: 16px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #2a2a4a;
+    }
+    .header h1 {
+      font-size: 16px;
+      font-weight: 500;
+    }
+    .status {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      margin-left: auto;
+    }
+    .status.locked { background: #e94560; color: white; }
+    .status.unlocked { background: #4ecdc4; color: #111; }
+    .token-section {
+      margin-bottom: 12px;
+    }
+    .token-section input {
+      width: 100%;
+      background: #0f3460;
+      border: 1px solid #2a2a4a;
+      border-radius: 6px;
+      padding: 8px 10px;
+      color: #eaeaea;
+      font-size: 12px;
+      outline: none;
+    }
+    .token-section input:focus { border-color: #e94560; }
+    .token-section label {
+      font-size: 11px;
+      color: #a0a0b0;
+      display: block;
+      margin-bottom: 4px;
+    }
+    .token-section button {
+      margin-top: 6px;
+      width: 100%;
+      background: #e94560;
+      border: none;
+      border-radius: 6px;
+      padding: 8px;
+      color: white;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .token-section button:hover { background: #ff6b6b; }
+    .entries { display: flex; flex-direction: column; gap: 6px; }
+    .entry-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      background: #16213e;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .entry-item:hover { background: #0f3460; }
+    .entry-icon {
+      width: 28px;
+      height: 28px;
+      background: #e94560;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+    .entry-info { flex: 1; min-width: 0; }
+    .entry-info .name {
+      font-size: 13px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .entry-info .username {
+      font-size: 11px;
+      color: #a0a0b0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .empty {
+      text-align: center;
+      color: #a0a0b0;
+      font-size: 13px;
+      padding: 20px 0;
+    }
+    .error {
+      color: #e94560;
+      font-size: 12px;
+      text-align: center;
+      padding: 10px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Vault</h1>
+    <span id="status" class="status locked">Locked</span>
+  </div>
+  <div id="token-section" class="token-section">
+    <label>API Token (copy from Vault app)</label>
+    <input type="password" id="token-input" placeholder="Paste token here..." />
+    <button id="save-token">Save Token</button>
+  </div>
+  <div id="content"></div>
+  <script src="popup.js"></script>
+</body>
+</html>
