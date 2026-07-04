@@ -1,5 +1,7 @@
 // Content script: fills login forms and detects form submissions
 
+const API_BASE = "http://127.0.0.1:7890";
+
 // Listen for fill commands from popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "VAULT_FILL") {
@@ -159,37 +161,30 @@ function showSavePrompt(username, password, onDone) {
   lastPromptKey = key;
 
   // Check if this credential already exists before showing the prompt
-  chrome.storage.local.get(["vaultToken"], async (result) => {
-    const token = result.vaultToken;
-    if (token) {
-      try {
-        const domain = window.location.hostname.replace("www.", "");
-        const res = await fetch(`http://127.0.0.1:7890/entries?domain=${encodeURIComponent(domain)}`, {
-          headers: { "Authorization": "Bearer " + token },
-        });
-        if (res.ok) {
-          const entries = await res.json();
-          const isDuplicate = entries.some(e =>
-            e.username.toLowerCase() === username.toLowerCase()
-          );
-          if (isDuplicate) {
-            // Already saved, skip silently
-            if (onDone) onDone();
-            return;
-          }
+  (async () => {
+    try {
+      const domain = window.location.hostname.replace("www.", "");
+      const res = await fetch(`${API_BASE}/entries?domain=${encodeURIComponent(domain)}`);
+      if (res.ok) {
+        const entries = await res.json();
+        const isDuplicate = entries.some(e =>
+          e.username.toLowerCase() === username.toLowerCase()
+        );
+        if (isDuplicate) {
+          if (onDone) onDone();
+          return;
         }
-      } catch (e) {
-        // Can't reach vault, show prompt anyway
       }
+      // If 429 (rate limited), just show prompt anyway — saving won't work but that's fine
+    } catch (e) {
+      // Can't reach vault, show prompt anyway
     }
 
-    // Not a duplicate — show the save prompt
     showSavePromptUI(username, password, onDone);
-  });
+  })();
 }
 
 function showSavePromptUI(username, password, onDone) {
-
   const existing = document.getElementById("vault-save-prompt");
   if (existing) existing.remove();
 
@@ -219,20 +214,9 @@ function showSavePromptUI(username, password, onDone) {
     btn.disabled = true;
 
     try {
-      const result = await chrome.storage.local.get(["vaultToken"]);
-      const token = result.vaultToken;
-      if (!token) {
-        btn.textContent = "No token set!";
-        setTimeout(() => { banner.remove(); if (onDone) onDone(); }, 2000);
-        return;
-      }
-
-      const res = await fetch("http://127.0.0.1:7890/entries", {
+      const res = await fetch(`${API_BASE}/entries`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": "Bearer " + token,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           username: username,
           password: password,
@@ -240,6 +224,13 @@ function showSavePromptUI(username, password, onDone) {
           name: window.location.hostname.replace("www.", ""),
         }),
       });
+
+      if (res.status === 429) {
+        btn.textContent = "Rate limited";
+        btn.style.background = "#f5a623";
+        setTimeout(() => { banner.remove(); if (onDone) onDone(); }, 2000);
+        return;
+      }
 
       if (res.ok) {
         const data = await res.json().catch(() => ({}));

@@ -21,6 +21,7 @@ pub fn run() {
         vault_data: Mutex::new(None),
         master_password: Mutex::new(None),
         api_token: Mutex::new(None),
+        pairing_code: Mutex::new(None),
     });
 
     let api_state = shared_state.clone();
@@ -191,6 +192,7 @@ pub fn run() {
             commands::is_unlocked,
             commands::list_entries,
             commands::get_entry,
+            commands::get_totp_code,
             commands::add_entry,
             commands::edit_entry,
             commands::delete_entry,
@@ -203,6 +205,8 @@ pub fn run() {
             commands::import_vault,
             commands::import_csv,
             commands::get_api_token,
+            commands::get_pairing_code,
+            commands::clear_pairing_code,
             commands::auto_type,
             commands::set_start_on_boot,
             commands::get_start_on_boot,

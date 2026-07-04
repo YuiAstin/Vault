@@ -1,21 +1,26 @@
 //! Local HTTP API server for the browser extension.
-//! Runs on localhost:7890 with token-based auth.
-//! Provides read-only access to vault entries filtered by domain.
+//! Runs on localhost:7890 with tokenless access (localhost = trusted).
+//! Rate-limited: if requests come inhumanly fast, locks out and requires pairing.
 
 use crate::commands::AppState;
 use serde::Serialize;
 #[allow(unused_imports)]
 use std::io::Read as _;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::thread;
+use std::time::{Duration, Instant};
 use tiny_http::{Header, Response, Server};
 
 const PORT: u16 = 7890;
+const RATE_LIMIT_MAX: usize = 5; // max credential fetches
+const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(10); // in this window
 
 #[derive(Serialize)]
 struct StatusResponse {
     unlocked: bool,
     version: &'static str,
+    paired: bool,
 }
 
 #[derive(Serialize)]
@@ -32,6 +37,116 @@ struct ErrorResponse {
     error: String,
 }
 
+#[derive(Serialize)]
+struct RateLimitResponse {
+    error: String,
+    code: String,
+    pairing_required: bool,
+}
+
+/// Rate limiter state
+struct RateLimiter {
+    /// Timestamps of recent credential-fetching requests
+    timestamps: Vec<Instant>,
+    /// If locked out, when the lockout started
+    locked_until: Option<Instant>,
+    /// Active pairing code (6 digits), set when lockout triggers
+    pairing_code: Option<String>,
+    /// Whether a client has successfully paired (resets on lockout)
+    paired: bool,
+    /// Entries that were served before lockout (potentially compromised)
+    exposed_entries: Vec<ExposedEntry>,
+}
+
+#[derive(Clone, Serialize)]
+struct ExposedEntry {
+    name: String,
+    username: String,
+    url: String,
+}
+
+impl RateLimiter {
+    fn new() -> Self {
+        Self {
+            timestamps: Vec::new(),
+            locked_until: None,
+            pairing_code: None,
+            paired: true, // Start paired (no challenge needed initially)
+            exposed_entries: Vec::new(),
+        }
+    }
+
+    /// Record a credential access. Returns true if allowed, false if rate limited.
+    fn check_and_record(&mut self) -> bool {
+        let now = Instant::now();
+
+        // If locked out, stay locked until paired
+        if self.locked_until.is_some() {
+            return false;
+        }
+
+        // Prune old timestamps outside the window
+        self.timestamps.retain(|t| now.duration_since(*t) < RATE_LIMIT_WINDOW);
+
+        // Check rate
+        if self.timestamps.len() >= RATE_LIMIT_MAX {
+            // Trigger lockout — stays until pairing
+            self.locked_until = Some(now);
+            self.paired = false;
+            self.pairing_code = Some(generate_pairing_code());
+            return false;
+        }
+
+        self.timestamps.push(now);
+        true
+    }
+
+    fn is_locked(&self) -> bool {
+        self.locked_until.is_some()
+    }
+
+    fn get_pairing_code(&self) -> Option<&String> {
+        self.pairing_code.as_ref()
+    }
+
+    fn try_pair(&mut self, code: &str) -> bool {
+        if let Some(ref expected) = self.pairing_code {
+            if code == expected {
+                self.paired = true;
+                self.locked_until = None;
+                self.pairing_code = None;
+                self.timestamps.clear();
+                // Don't clear exposed_entries — keep them for the alert
+                return true;
+            }
+        }
+        false
+    }
+
+    fn record_exposed(&mut self, entries: &[ExposedEntry]) {
+        for entry in entries {
+            // Avoid duplicates
+            if !self.exposed_entries.iter().any(|e| e.username == entry.username && e.url == entry.url) {
+                self.exposed_entries.push(entry.clone());
+            }
+        }
+    }
+
+    fn get_exposed(&self) -> &[ExposedEntry] {
+        &self.exposed_entries
+    }
+
+    fn clear_exposed(&mut self) {
+        self.exposed_entries.clear();
+    }
+}
+
+fn generate_pairing_code() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    format!("{:06}", rng.gen_range(0..1000000))
+}
+
 /// Start the local API server on a background thread.
 /// The server shares the AppState with Tauri via Arc.
 pub fn start_api_server(state: Arc<AppState>) {
@@ -44,6 +159,8 @@ pub fn start_api_server(state: Arc<AppState>) {
             }
         };
 
+        let rate_limiter = Arc::new(Mutex::new(RateLimiter::new()));
+
         log::info!("Vault API server running on http://127.0.0.1:{}", PORT);
 
         for mut request in server.incoming_requests() {
@@ -55,7 +172,7 @@ pub fn start_api_server(state: Arc<AppState>) {
             .unwrap();
             let cors_headers = Header::from_bytes(
                 &b"Access-Control-Allow-Headers"[..],
-                &b"Authorization, Content-Type"[..],
+                &b"Content-Type"[..],
             )
             .unwrap();
             let cors_methods = Header::from_bytes(
@@ -79,42 +196,6 @@ pub fn start_api_server(state: Arc<AppState>) {
                 continue;
             }
 
-            // Check auth token
-            let token_guard = state.api_token.lock().unwrap();
-            let expected_token = token_guard.clone();
-            drop(token_guard);
-
-            if let Some(ref token) = expected_token {
-                let auth_value: Option<String> = request
-                    .headers()
-                    .iter()
-                    .find(|h| {
-                        let field = h.field.to_string();
-                        field.eq_ignore_ascii_case("Authorization")
-                    })
-                    .map(|h| h.value.to_string());
-
-                let authorized = match auth_value {
-                    Some(val) => {
-                        val == format!("Bearer {}", token) || val == *token
-                    }
-                    None => false,
-                };
-
-                if !authorized && request.url() != "/status" {
-                    let body = serde_json::to_string(&ErrorResponse {
-                        error: "Unauthorized".to_string(),
-                    })
-                    .unwrap();
-                    let response = Response::from_string(body)
-                        .with_status_code(401)
-                        .with_header(content_type)
-                        .with_header(cors_origin);
-                    let _ = request.respond(response);
-                    continue;
-                }
-            }
-
             // Route requests
             let url = request.url().to_string();
             let method = request.method().as_str().to_string();
@@ -122,9 +203,11 @@ pub fn start_api_server(state: Arc<AppState>) {
             match (method.as_str(), url.as_str()) {
                 (_, "/status") => {
                     let unlocked = state.vault_data.lock().unwrap().is_some();
+                    let rl = rate_limiter.lock().unwrap();
                     let body = serde_json::to_string(&StatusResponse {
                         unlocked,
-                        version: "0.1.0",
+                        version: "0.3.0",
+                        paired: rl.paired,
                     })
                     .unwrap();
                     let response = Response::from_string(body)
@@ -132,7 +215,107 @@ pub fn start_api_server(state: Arc<AppState>) {
                         .with_header(cors_origin);
                     let _ = request.respond(response);
                 }
+                ("POST", "/pair") => {
+                    // Pairing challenge: client sends {"code": "123456"}
+                    let mut body_buf = String::new();
+                    request.as_reader().read_to_string(&mut body_buf).ok();
+
+                    #[derive(serde::Deserialize)]
+                    struct PairRequest {
+                        code: String,
+                    }
+
+                    match serde_json::from_str::<PairRequest>(&body_buf) {
+                        Ok(req) => {
+                            let mut rl = rate_limiter.lock().unwrap();
+                            if rl.try_pair(&req.code) {
+                                let body = serde_json::to_string(&serde_json::json!({"paired": true})).unwrap();
+                                let response = Response::from_string(body)
+                                    .with_header(content_type)
+                                    .with_header(cors_origin);
+                                let _ = request.respond(response);
+                            } else {
+                                let body = serde_json::to_string(&ErrorResponse {
+                                    error: "Invalid pairing code".to_string(),
+                                }).unwrap();
+                                let response = Response::from_string(body)
+                                    .with_status_code(403)
+                                    .with_header(content_type)
+                                    .with_header(cors_origin);
+                                let _ = request.respond(response);
+                            }
+                        }
+                        Err(_) => {
+                            let body = serde_json::to_string(&ErrorResponse {
+                                error: "Invalid JSON".to_string(),
+                            }).unwrap();
+                            let response = Response::from_string(body)
+                                .with_status_code(400)
+                                .with_header(content_type)
+                                .with_header(cors_origin);
+                            let _ = request.respond(response);
+                        }
+                    }
+                }
+                ("GET", "/pairing-code") => {
+                    // Called by the Tauri frontend to display the code
+                    let rl = rate_limiter.lock().unwrap();
+                    let code = rl.get_pairing_code().cloned().unwrap_or_default();
+                    let locked = rl.is_locked();
+                    let body = serde_json::to_string(&serde_json::json!({
+                        "code": code,
+                        "locked": locked
+                    })).unwrap();
+                    let response = Response::from_string(body)
+                        .with_header(content_type)
+                        .with_header(cors_origin);
+                    let _ = request.respond(response);
+                }
+                ("GET", "/exposed-entries") => {
+                    // Returns entries that were served before lockout (potentially compromised)
+                    let rl = rate_limiter.lock().unwrap();
+                    let exposed = rl.get_exposed().to_vec();
+                    let body = serde_json::to_string(&exposed).unwrap();
+                    let response = Response::from_string(body)
+                        .with_header(content_type)
+                        .with_header(cors_origin);
+                    let _ = request.respond(response);
+                }
+                ("POST", "/dismiss-alert") => {
+                    // User acknowledges the breach alert
+                    let mut rl = rate_limiter.lock().unwrap();
+                    rl.clear_exposed();
+                    let body = serde_json::to_string(&serde_json::json!({"dismissed": true})).unwrap();
+                    let response = Response::from_string(body)
+                        .with_header(content_type)
+                        .with_header(cors_origin);
+                    let _ = request.respond(response);
+                }
                 ("GET", _) if url.starts_with("/entries") => {
+                    // Rate limit check for credential access
+                    {
+                        let mut rl = rate_limiter.lock().unwrap();
+                        if !rl.check_and_record() {
+                            let code = rl.get_pairing_code().cloned().unwrap_or_default();
+                            drop(rl);
+
+                            // Notify the app that pairing is needed
+                            let _ = state.pairing_code.lock().unwrap().replace(code.clone());
+
+                            let body = serde_json::to_string(&RateLimitResponse {
+                                error: "Rate limited. Too many requests too fast.".to_string(),
+                                code: "RATE_LIMITED".to_string(),
+                                pairing_required: true,
+                            }).unwrap();
+                            let response = Response::from_string(body)
+                                .with_status_code(429)
+                                .with_header(content_type)
+                                .with_header(cors_origin);
+                            let _ = request.respond(response);
+                            continue;
+                        }
+                    }
+
                     // Parse domain query param: /entries?domain=github.com
                     let domain = url
                         .split('?')
@@ -178,6 +361,17 @@ pub fn start_api_server(state: Arc<AppState>) {
                                 })
                                 .collect();
 
+                            // Track exposed entries for breach alert
+                            {
+                                let exposed: Vec<ExposedEntry> = entries.iter().map(|e| ExposedEntry {
+                                    name: e.name.clone(),
+                                    username: e.username.clone(),
+                                    url: e.url.clone(),
+                                }).collect();
+                                let mut rl = rate_limiter.lock().unwrap();
+                                rl.record_exposed(&exposed);
+                            }
+
                             let body = serde_json::to_string(&entries).unwrap();
                             let response = Response::from_string(body)
                                 .with_header(content_type)
@@ -187,6 +381,28 @@ pub fn start_api_server(state: Arc<AppState>) {
                     }
                 }
                 ("POST", "/entries") => {
+                    // Rate limit check for saving too
+                    {
+                        let mut rl = rate_limiter.lock().unwrap();
+                        if !rl.check_and_record() {
+                            let code = rl.get_pairing_code().cloned().unwrap_or_default();
+                            drop(rl);
+                            let _ = state.pairing_code.lock().unwrap().replace(code.clone());
+
+                            let body = serde_json::to_string(&RateLimitResponse {
+                                error: "Rate limited".to_string(),
+                                code: "RATE_LIMITED".to_string(),
+                                pairing_required: true,
+                            }).unwrap();
+                            let response = Response::from_string(body)
+                                .with_status_code(429)
+                                .with_header(content_type)
+                                .with_header(cors_origin);
+                            let _ = request.respond(response);
+                            continue;
+                        }
+                    }
+
                     // Add a new entry from the browser extension
                     let mut body_buf = String::new();
                     request.as_reader().read_to_string(&mut body_buf).ok();
@@ -234,7 +450,7 @@ pub fn start_api_server(state: Arc<AppState>) {
                                             .to_string()
                                     });
 
-                                    // Check for duplicate: same username + same domain
+                                    // Check for duplicate
                                     let is_duplicate = data.entries.values().any(|e| {
                                         e.username == input.username && (
                                             e.url.to_lowercase().contains(&entry_url.to_lowercase()) ||
@@ -250,7 +466,7 @@ pub fn start_api_server(state: Arc<AppState>) {
                                             .with_header(content_type)
                                             .with_header(cors_origin);
                                         let _ = request.respond(response);
-                                        return;
+                                        continue;
                                     }
 
                                     let id = uuid::Uuid::new_v4().to_string();
@@ -264,6 +480,7 @@ pub fn start_api_server(state: Arc<AppState>) {
                                         category: "Saved from browser".to_string(),
                                         created_at: chrono::Utc::now().to_rfc3339(),
                                         updated_at: String::new(),
+                                        totp_secret: String::new(),
                                     };
                                     data.entries.insert(id.clone(), entry);
 

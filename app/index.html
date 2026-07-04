@@ -128,6 +128,17 @@
             <span id="detail-notes"></span>
           </div>
         </div>
+        <div class="field" id="detail-totp-field" style="display:none;">
+          <label>2FA Code</label>
+          <div class="field-value">
+            <span id="detail-totp-code" style="font-family:monospace;font-size:20px;letter-spacing:3px;font-weight:600;"></span>
+            <span id="detail-totp-timer" style="font-size:12px;color:var(--text-dim);min-width:30px;text-align:right;"></span>
+            <button class="copy-btn" id="copy-totp-btn">Copy</button>
+          </div>
+          <div id="totp-progress-bar" style="height:3px;background:var(--border);border-radius:2px;margin-top:6px;overflow:hidden;">
+            <div id="totp-progress-fill" style="height:100%;background:var(--accent);transition:width 1s linear;"></div>
+          </div>
+        </div>
         <div class="panel-actions">
           <button id="autotype-btn" class="btn-secondary">Auto-type</button>
           <button id="check-breach-btn" class="btn-secondary">Check Breach</button>
@@ -174,6 +185,10 @@
           <label for="entry-notes">Notes (optional)</label>
           <textarea id="entry-notes" rows="3" placeholder="Additional notes..."></textarea>
         </div>
+        <div class="form-field">
+          <label for="entry-totp">TOTP Secret (optional)</label>
+          <input type="text" id="entry-totp" placeholder="Base32 secret or otpauth:// URI" />
+        </div>
         <button type="submit" class="btn-primary">Save Entry</button>
       </form>
     </div>
@@ -215,6 +230,10 @@
         <div class="form-field">
           <label for="edit-entry-notes">Notes (optional)</label>
           <textarea id="edit-entry-notes" rows="3" placeholder="Additional notes..."></textarea>
+        </div>
+        <div class="form-field">
+          <label for="edit-entry-totp">TOTP Secret (optional)</label>
+          <input type="text" id="edit-entry-totp" placeholder="Base32 secret or otpauth:// URI" />
         </div>
         <button type="submit" class="btn-primary">Save Changes</button>
       </form>

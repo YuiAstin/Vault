@@ -10,6 +10,7 @@ pub struct AppState {
     pub vault_data: Mutex<Option<vault::VaultData>>,
     pub master_password: Mutex<Option<String>>,
     pub api_token: Mutex<Option<String>>,
+    pub pairing_code: Mutex<Option<String>>,
 }
 
 #[derive(Serialize)]
@@ -22,6 +23,7 @@ pub struct EntryResponse {
     pub notes: String,
     pub category: String,
     pub created_at: String,
+    pub totp_secret: String,
 }
 
 #[derive(Serialize)]
@@ -111,6 +113,7 @@ pub fn get_entry(id: String, state: State<'_, Arc<AppState>>) -> Result<EntryRes
         notes: entry.notes.clone(),
         category: entry.category.clone(),
         created_at: entry.created_at.clone(),
+        totp_secret: entry.totp_secret.clone(),
     })
 }
 
@@ -122,6 +125,96 @@ pub struct AddEntryInput {
     pub url: Option<String>,
     pub notes: Option<String>,
     pub category: Option<String>,
+    pub totp_secret: Option<String>,
+}
+
+#[tauri::command]
+pub fn get_totp_code(id: String, state: State<'_, Arc<AppState>>) -> Result<TotpResponse, String> {
+    let guard = state.vault_data.lock().unwrap();
+    let data = guard.as_ref().ok_or("Vault is locked")?;
+    let entry = data.entries.get(&id).ok_or("Entry not found")?;
+
+    if entry.totp_secret.is_empty() {
+        return Err("No TOTP secret configured for this entry".to_string());
+    }
+
+    let code = generate_totp(&entry.totp_secret)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let remaining = 30 - (now % 30) as u8;
+
+    Ok(TotpResponse { code, remaining })
+}
+
+#[derive(Serialize)]
+pub struct TotpResponse {
+    pub code: String,
+    pub remaining: u8,
+}
+
+/// Generate a TOTP code from a base32-encoded secret or an otpauth:// URI.
+fn generate_totp(secret_input: &str) -> Result<String, String> {
+    use data_encoding::BASE32_NOPAD;
+    use hmac::{Hmac, Mac};
+    use sha1::Sha1;
+
+    // Extract secret from otpauth:// URI if needed
+    let secret_b32 = if secret_input.starts_with("otpauth://") {
+        extract_secret_from_uri(secret_input)?
+    } else {
+        secret_input.to_string()
+    };
+
+    // Clean the secret: remove spaces, uppercase, strip padding
+    let cleaned: String = secret_b32
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '=')
+        .collect::<String>()
+        .to_uppercase();
+
+    let secret = BASE32_NOPAD
+        .decode(cleaned.as_bytes())
+        .map_err(|e| format!("Invalid TOTP secret (bad base32): {}", e))?;
+
+    // Get current time step
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let counter: u64 = now / 30;
+    let counter_bytes = counter.to_be_bytes();
+
+    // HMAC-SHA1
+    type HmacSha1 = Hmac<Sha1>;
+    let mut mac = HmacSha1::new_from_slice(&secret)
+        .map_err(|_| "HMAC key error".to_string())?;
+    mac.update(&counter_bytes);
+    let result = mac.finalize().into_bytes();
+
+    // Dynamic truncation
+    let offset = (result[19] & 0x0f) as usize;
+    let code_bytes: u32 = ((result[offset] as u32 & 0x7f) << 24)
+        | ((result[offset + 1] as u32) << 16)
+        | ((result[offset + 2] as u32) << 8)
+        | (result[offset + 3] as u32);
+
+    let code = code_bytes % 1_000_000;
+    Ok(format!("{:06}", code))
+}
+
+/// Extract the secret parameter from an otpauth:// URI.
+fn extract_secret_from_uri(uri: &str) -> Result<String, String> {
+    // otpauth://totp/Label?secret=BASE32SECRET&issuer=Example
+    uri.split('?')
+        .nth(1)
+        .and_then(|query| {
+            query.split('&')
+                .find(|p| p.to_lowercase().starts_with("secret="))
+                .map(|p| p.splitn(2, '=').nth(1).unwrap_or("").to_string())
+        })
+        .ok_or_else(|| "Invalid otpauth URI: no secret parameter found".to_string())
 }
 
 #[tauri::command]
@@ -140,6 +233,7 @@ pub fn add_entry(input: AddEntryInput, state: State<'_, Arc<AppState>>) -> Resul
         category: input.category.unwrap_or_default(),
         created_at: chrono::Utc::now().to_rfc3339(),
         updated_at: String::new(),
+        totp_secret: input.totp_secret.unwrap_or_default(),
     };
 
     data.entries.insert(id.clone(), entry);
@@ -161,6 +255,7 @@ pub struct EditEntryInput {
     pub url: Option<String>,
     pub notes: Option<String>,
     pub category: Option<String>,
+    pub totp_secret: Option<String>,
 }
 
 #[tauri::command]
@@ -187,6 +282,9 @@ pub fn edit_entry(input: EditEntryInput, state: State<'_, Arc<AppState>>) -> Res
     }
     if let Some(category) = input.category {
         entry.category = category;
+    }
+    if let Some(totp_secret) = input.totp_secret {
+        entry.totp_secret = totp_secret;
     }
 
     entry.updated_at = chrono::Utc::now().to_rfc3339();
@@ -435,6 +533,7 @@ pub fn import_csv(file_path: String, state: State<'_, Arc<AppState>>) -> Result<
             category: "Imported".to_string(),
             created_at: chrono::Utc::now().to_rfc3339(),
             updated_at: String::new(),
+            totp_secret: String::new(),
         };
 
         data.entries.insert(id, entry);
@@ -453,6 +552,19 @@ pub fn import_csv(file_path: String, state: State<'_, Arc<AppState>>) -> Result<
 pub fn get_api_token(state: State<'_, Arc<AppState>>) -> Result<String, String> {
     let guard = state.api_token.lock().unwrap();
     guard.clone().ok_or("Vault is locked — no token available".to_string())
+}
+
+#[tauri::command]
+pub fn get_pairing_code(state: State<'_, Arc<AppState>>) -> Result<String, String> {
+    let guard = state.pairing_code.lock().unwrap();
+    guard.clone().ok_or("No pairing code active".to_string())
+}
+
+#[tauri::command]
+pub fn clear_pairing_code(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    let mut guard = state.pairing_code.lock().unwrap();
+    *guard = None;
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]

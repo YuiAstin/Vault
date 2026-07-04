@@ -2,28 +2,54 @@ const API_BASE = "http://127.0.0.1:7890";
 
 const statusEl = document.getElementById("status");
 const contentEl = document.getElementById("content");
-const tokenSection = document.getElementById("token-section");
-const tokenInput = document.getElementById("token-input");
-const saveTokenBtn = document.getElementById("save-token");
+const pairingSection = document.getElementById("pairing-section");
+const pairCodeInput = document.getElementById("pair-code-input");
+const pairBtn = document.getElementById("pair-btn");
+const pairError = document.getElementById("pair-error");
 
-let apiToken = "";
+// Auto-connect on open (no token needed)
+checkStatusAndLoad();
 
-// Load saved token
-chrome.storage.local.get(["vaultToken"], (result) => {
-  if (result.vaultToken) {
-    apiToken = result.vaultToken;
-    tokenInput.value = apiToken;
-    checkStatusAndLoad();
+pairBtn.addEventListener("click", submitPairingCode);
+pairCodeInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") submitPairingCode();
+});
+
+async function submitPairingCode() {
+  const code = pairCodeInput.value.trim();
+  if (code.length !== 6) {
+    pairError.textContent = "Enter the 6-digit code";
+    return;
   }
-});
 
-saveTokenBtn.addEventListener("click", () => {
-  apiToken = tokenInput.value.trim();
-  if (!apiToken) return;
-  chrome.storage.local.set({ vaultToken: apiToken }, () => {
-    checkStatusAndLoad();
-  });
-});
+  pairBtn.textContent = "Pairing...";
+  pairBtn.disabled = true;
+  pairError.textContent = "";
+
+  try {
+    const res = await fetch(`${API_BASE}/pair`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+
+    if (res.ok) {
+      pairingSection.classList.remove("active");
+      pairBtn.textContent = "Pair";
+      pairBtn.disabled = false;
+      pairCodeInput.value = "";
+      await checkStatusAndLoad();
+    } else {
+      pairError.textContent = "Wrong code. Check Vault app.";
+      pairBtn.textContent = "Pair";
+      pairBtn.disabled = false;
+    }
+  } catch (err) {
+    pairError.textContent = "Cannot reach Vault";
+    pairBtn.textContent = "Pair";
+    pairBtn.disabled = false;
+  }
+}
 
 async function checkStatusAndLoad() {
   try {
@@ -31,9 +57,9 @@ async function checkStatusAndLoad() {
     const data = await res.json();
 
     if (data.unlocked) {
-      statusEl.textContent = "Unlocked";
+      statusEl.textContent = "Connected";
       statusEl.className = "status unlocked";
-      tokenSection.style.display = "none";
+      pairingSection.classList.remove("active");
       await loadEntries();
     } else {
       statusEl.textContent = "Locked";
@@ -57,20 +83,26 @@ async function loadEntries() {
   } catch (e) {}
 
   try {
-    const res = await fetch(`${API_BASE}/entries?domain=${encodeURIComponent(domain)}`, {
-      headers: { Authorization: `Bearer ${apiToken}` },
-    });
+    const res = await fetch(`${API_BASE}/entries?domain=${encodeURIComponent(domain)}`);
 
-    if (res.status === 401) {
-      contentEl.innerHTML = '<p class="error">Invalid token. Update it above.</p>';
-      tokenSection.style.display = "block";
+    if (res.status === 429) {
+      // Rate limited — show pairing UI
+      statusEl.textContent = "Pairing Required";
+      statusEl.className = "status pairing";
+      pairingSection.classList.add("active");
+      contentEl.innerHTML = "";
+      return;
+    }
+
+    if (res.status === 403) {
+      contentEl.innerHTML = '<p class="empty">Vault is locked. Unlock it in the desktop app.</p>';
       return;
     }
 
     const entries = await res.json();
 
     if (entries.length === 0) {
-      contentEl.innerHTML = `<p class="empty">No entries for ${domain || "this site"}</p>`;
+      contentEl.innerHTML = `<p class="empty">No entries for ${escapeHtml(domain) || "this site"}</p>`;
       return;
     }
 
@@ -91,7 +123,6 @@ async function loadEntries() {
       el.addEventListener("click", () => {
         const username = el.dataset.username;
         const password = el.dataset.password;
-        // Send to content script
         chrome.tabs.sendMessage(tab.id, {
           type: "VAULT_FILL",
           username,

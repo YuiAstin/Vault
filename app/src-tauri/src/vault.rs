@@ -23,6 +23,8 @@ pub struct VaultEntry {
     pub created_at: String,
     #[serde(default)]
     pub updated_at: String,
+    #[serde(default)]
+    pub totp_secret: String,
 }
 
 /// The decrypted vault contents.

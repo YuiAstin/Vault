@@ -32,38 +32,7 @@
     }
     .status.locked { background: #e94560; color: white; }
     .status.unlocked { background: #4ecdc4; color: #111; }
-    .token-section {
-      margin-bottom: 12px;
-    }
-    .token-section input {
-      width: 100%;
-      background: #0f3460;
-      border: 1px solid #2a2a4a;
-      border-radius: 6px;
-      padding: 8px 10px;
-      color: #eaeaea;
-      font-size: 12px;
-      outline: none;
-    }
-    .token-section input:focus { border-color: #e94560; }
-    .token-section label {
-      font-size: 11px;
-      color: #a0a0b0;
-      display: block;
-      margin-bottom: 4px;
-    }
-    .token-section button {
-      margin-top: 6px;
-      width: 100%;
-      background: #e94560;
-      border: none;
-      border-radius: 6px;
-      padding: 8px;
-      color: white;
-      font-size: 12px;
-      cursor: pointer;
-    }
-    .token-section button:hover { background: #ff6b6b; }
+    .status.pairing { background: #f5a623; color: #111; }
     .entries { display: flex; flex-direction: column; gap: 6px; }
     .entry-item {
       display: flex;
@@ -115,17 +84,67 @@
       text-align: center;
       padding: 10px 0;
     }
+    .pairing-section {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      padding: 16px 0;
+    }
+    .pairing-section.active { display: flex; }
+    .pairing-section .icon {
+      font-size: 32px;
+    }
+    .pairing-section p {
+      font-size: 12px;
+      color: #a0a0b0;
+      text-align: center;
+      line-height: 1.4;
+    }
+    .pairing-section input {
+      width: 140px;
+      background: #0f3460;
+      border: 1px solid #2a2a4a;
+      border-radius: 6px;
+      padding: 10px;
+      color: #eaeaea;
+      font-size: 18px;
+      font-family: monospace;
+      text-align: center;
+      letter-spacing: 4px;
+      outline: none;
+    }
+    .pairing-section input:focus { border-color: #f5a623; }
+    .pairing-section button {
+      width: 140px;
+      background: #f5a623;
+      border: none;
+      border-radius: 6px;
+      padding: 8px;
+      color: #111;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .pairing-section button:hover { background: #fbbf24; }
+    .pairing-section .pair-error {
+      color: #e94560;
+      font-size: 11px;
+      min-height: 16px;
+    }
   </style>
 </head>
 <body>
   <div class="header">
     <h1>Vault</h1>
-    <span id="status" class="status locked">Locked</span>
+    <span id="status" class="status locked">Connecting...</span>
   </div>
-  <div id="token-section" class="token-section">
-    <label>API Token (copy from Vault app)</label>
-    <input type="password" id="token-input" placeholder="Paste token here..." />
-    <button id="save-token">Save Token</button>
+  <div id="pairing-section" class="pairing-section">
+    <div class="icon">&#x1F512;</div>
+    <p>Too many requests detected.<br>Enter the pairing code shown in Vault:</p>
+    <input type="text" id="pair-code-input" maxlength="6" placeholder="000000" />
+    <button id="pair-btn">Pair</button>
+    <span id="pair-error" class="pair-error"></span>
   </div>
   <div id="content"></div>
   <script src="popup.js"></script>

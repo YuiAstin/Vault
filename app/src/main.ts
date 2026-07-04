@@ -236,6 +236,7 @@ async function showDetail(id: string) {
       notes: string;
       category: string;
       created_at: string;
+      totp_secret: string;
     } = await invoke("get_entry", { id });
 
     currentEntryId = entry.id;
@@ -272,17 +273,75 @@ async function showDetail(id: string) {
       notesField.style.display = "none";
     }
 
+    // TOTP display
+    const totpField = document.getElementById("detail-totp-field")!;
+    if (entry.totp_secret) {
+      totpField.style.display = "flex";
+      startTotpRefresh(entry.id);
+    } else {
+      totpField.style.display = "none";
+      stopTotpRefresh();
+    }
+
     detailPanel.classList.remove("hidden");
   } catch (err) {
     toast("Error loading entry");
   }
 }
 
+// --- TOTP Timer ---
+let totpInterval: ReturnType<typeof setInterval> | null = null;
+let currentTotpEntryId: string | null = null;
+
+function startTotpRefresh(entryId: string) {
+  stopTotpRefresh();
+  currentTotpEntryId = entryId;
+  refreshTotpCode();
+  totpInterval = setInterval(refreshTotpCode, 1000);
+}
+
+function stopTotpRefresh() {
+  if (totpInterval) {
+    clearInterval(totpInterval);
+    totpInterval = null;
+  }
+  currentTotpEntryId = null;
+}
+
+async function refreshTotpCode() {
+  if (!currentTotpEntryId) return;
+  try {
+    const result: { code: string; remaining: number } = await invoke("get_totp_code", { id: currentTotpEntryId });
+    document.getElementById("detail-totp-code")!.textContent = result.code;
+    document.getElementById("detail-totp-timer")!.textContent = `${result.remaining}s`;
+    const fill = document.getElementById("totp-progress-fill")!;
+    fill.style.width = `${(result.remaining / 30) * 100}%`;
+    // Change color when running low
+    if (result.remaining <= 5) {
+      fill.style.background = "var(--danger)";
+    } else {
+      fill.style.background = "var(--accent)";
+    }
+  } catch {
+    document.getElementById("detail-totp-code")!.textContent = "------";
+    document.getElementById("detail-totp-timer")!.textContent = "";
+  }
+}
+
+// Copy TOTP button
+document.getElementById("copy-totp-btn")!.addEventListener("click", async () => {
+  const code = document.getElementById("detail-totp-code")!.textContent || "";
+  if (code && code !== "------") {
+    await copyToClipboard(code);
+  }
+});
+
 // Close detail
 document.getElementById("close-detail")!.addEventListener("click", () => {
   detailPanel.classList.add("hidden");
   currentEntryId = null;
   currentEntryPassword = "";
+  stopTotpRefresh();
   // Reset password visibility
   const pwEl = document.getElementById("detail-password")!;
   pwEl.textContent = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
@@ -414,7 +473,7 @@ addForm.addEventListener("submit", async (e) => {
 
   try {
     await invoke("add_entry", {
-      input: { name, username, password, url: url || null, notes: notes || null, category: (document.getElementById("entry-category") as HTMLInputElement).value.trim() || null },
+      input: { name, username, password, url: url || null, notes: notes || null, category: (document.getElementById("entry-category") as HTMLInputElement).value.trim() || null, totp_secret: (document.getElementById("entry-totp") as HTMLInputElement).value.trim() || null },
     });
     addForm.reset();
     await loadEntries();
@@ -481,11 +540,10 @@ document.getElementById("import-csv-btn")!.addEventListener("click", async () =>
 
 document.getElementById("copy-token-btn")!.addEventListener("click", async () => {
   try {
-    const token: string = await invoke("get_api_token");
-    await copyToClipboard(token);
-    toast("API token copied — paste in browser extension");
-  } catch (err) {
-    toast(String(err));
+    const code: string = await invoke("get_pairing_code");
+    toast(`Pairing code: ${code}`);
+  } catch {
+    toast("No pairing needed — extension connects automatically");
   }
 });
 
@@ -506,6 +564,7 @@ document.getElementById("edit-entry-btn")!.addEventListener("click", async () =>
       notes: string;
       category: string;
       created_at: string;
+      totp_secret: string;
     } = await invoke("get_entry", { id: currentEntryId });
 
     (document.getElementById("edit-entry-id") as HTMLInputElement).value = entry.id;
@@ -515,6 +574,7 @@ document.getElementById("edit-entry-btn")!.addEventListener("click", async () =>
     (document.getElementById("edit-entry-url") as HTMLInputElement).value = entry.url;
     (document.getElementById("edit-entry-category") as HTMLInputElement).value = entry.category;
     (document.getElementById("edit-entry-notes") as HTMLTextAreaElement).value = entry.notes;
+    (document.getElementById("edit-entry-totp") as HTMLInputElement).value = entry.totp_secret || "";
 
     detailPanel.classList.add("hidden");
     showScreen(editScreen);
@@ -551,6 +611,8 @@ editForm.addEventListener("submit", async (e) => {
     return;
   }
 
+  const totp_secret = (document.getElementById("edit-entry-totp") as HTMLInputElement).value.trim();
+
   const input: Record<string, string | null> = {
     id,
     name,
@@ -559,6 +621,7 @@ editForm.addEventListener("submit", async (e) => {
     url,
     category,
     notes,
+    totp_secret: totp_secret || null,
   };
 
   try {
@@ -650,6 +713,119 @@ function resetIdleTimer() {
 // --- Init ---
 initAuth();
 resetIdleTimer();
+
+// --- Pairing code display (poll for rate-limit lockout) ---
+let lastPairingCode = "";
+setInterval(async () => {
+  try {
+    const code: string = await invoke("get_pairing_code");
+    if (code && code !== lastPairingCode) {
+      lastPairingCode = code;
+      showPairingBanner(code);
+      // Also fetch exposed entries for breach alert
+      fetchExposedEntries();
+    }
+  } catch {
+    // No pairing code active — dismiss banner if shown
+    if (lastPairingCode) {
+      lastPairingCode = "";
+      dismissPairingBanner();
+    }
+  }
+}, 2000);
+
+async function fetchExposedEntries() {
+  try {
+    const res = await fetch("http://127.0.0.1:7890/exposed-entries");
+    if (res.ok) {
+      const entries: Array<{ name: string; username: string; url: string }> = await res.json();
+      if (entries.length > 0) {
+        showBreachAlert(entries);
+      }
+    }
+  } catch {
+    // Ignore — server might not be ready
+  }
+}
+
+function showBreachAlert(entries: Array<{ name: string; username: string; url: string }>) {
+  let panel = document.getElementById("breach-alert");
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.id = "breach-alert";
+    panel.style.cssText = `
+      position: fixed; top: 40px; left: 50%; transform: translateX(-50%);
+      background: #1a1a2e; border: 2px solid #e94560; border-radius: 12px;
+      padding: 20px; max-width: 360px; width: 90%; z-index: 201;
+      box-shadow: 0 8px 32px rgba(233,69,96,0.3); font-family: -apple-system, sans-serif;
+    `;
+    document.body.appendChild(panel);
+  }
+
+  const entryList = entries.map(e =>
+    `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #2a2a4a;">
+      <span style="color:#e94560;font-size:16px;">&#x26A0;</span>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;color:#eaeaea;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(e.name)}</div>
+        <div style="font-size:11px;color:#a0a0b0;">${escapeHtml(e.username)}</div>
+      </div>
+    </div>`
+  ).join("");
+
+  panel.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+      <span style="font-size:28px;color:#e94560;">&#x26A0;</span>
+      <div>
+        <div style="font-size:15px;font-weight:600;color:#e94560;">Security Alert</div>
+        <div style="font-size:12px;color:#a0a0b0;">Suspicious API activity detected</div>
+      </div>
+    </div>
+    <div style="font-size:12px;color:#eaeaea;margin-bottom:10px;line-height:1.5;">
+      The following credentials were accessed before the lockout triggered. They may have been compromised:
+    </div>
+    <div style="max-height:150px;overflow-y:auto;margin-bottom:12px;">
+      ${entryList}
+    </div>
+    <div style="background:#2a1520;border:1px solid #4a2639;border-radius:8px;padding:10px;margin-bottom:14px;">
+      <div style="font-size:12px;color:#f472b6;font-weight:500;margin-bottom:4px;">&#x1F6A8; Recommendation</div>
+      <div style="font-size:11px;color:#a0a0b0;line-height:1.4;">
+        Change <strong style="color:#eaeaea;">all</strong> your passwords, not just the ones listed above. If an attacker had local access, they may have captured more than what's shown here.
+      </div>
+    </div>
+    <button id="dismiss-breach-alert" style="
+      width:100%;background:#2a2a4a;border:1px solid #4a4a6a;border-radius:6px;
+      padding:10px;color:#a0a0b0;font-size:12px;cursor:pointer;
+    ">Dismiss</button>
+  `;
+
+  document.getElementById("dismiss-breach-alert")!.addEventListener("click", async () => {
+    try {
+      await fetch("http://127.0.0.1:7890/dismiss-alert", { method: "POST" });
+    } catch {}
+    panel!.remove();
+  });
+}
+
+function showPairingBanner(code: string) {
+  let banner = document.getElementById("pairing-banner");
+  if (!banner) {
+    banner = document.createElement("div");
+    banner.id = "pairing-banner";
+    banner.style.cssText = `
+      position: fixed; top: 0; left: 0; right: 0;
+      background: #f5a623; color: #111; padding: 12px 16px;
+      font-size: 14px; font-weight: 600; text-align: center;
+      z-index: 200; font-family: monospace;
+    `;
+    document.body.appendChild(banner);
+  }
+  banner.innerHTML = `Extension pairing code: <span style="font-size:20px;letter-spacing:4px;margin-left:8px;">${code}</span>`;
+}
+
+function dismissPairingBanner() {
+  const banner = document.getElementById("pairing-banner");
+  if (banner) banner.remove();
+}
 
 // --- Start on boot toggle ---
 const bootToggle = document.getElementById("start-on-boot-toggle") as HTMLInputElement;
