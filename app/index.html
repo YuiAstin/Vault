@@ -42,6 +42,12 @@
           <button id="import-csv-btn" class="btn-icon" title="Import from CSV">CSV</button>
           <button id="copy-token-btn" class="btn-icon" title="Copy API token for browser extension">&#x1F511;</button>
           <button id="add-btn" class="btn-icon" title="Add entry">+</button>
+          <button id="theme-btn" class="btn-icon" title="Theme settings">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+            </svg>
+          </button>
           <button id="lock-btn" class="btn-icon" title="Lock vault">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
@@ -212,6 +218,75 @@
         </div>
         <button type="submit" class="btn-primary">Save Changes</button>
       </form>
+    </div>
+
+    <!-- Theme Settings Screen -->
+    <div id="theme-screen" class="screen">
+      <header>
+        <button id="theme-back-btn" class="btn-icon">&larr;</button>
+        <h2>Theme</h2>
+      </header>
+
+      <div class="theme-content">
+        <!-- Preset Grid -->
+        <section class="theme-section">
+          <h3 class="theme-section-title">Presets</h3>
+          <div id="theme-presets" class="theme-grid"></div>
+        </section>
+
+        <!-- Custom Colors -->
+        <section class="theme-section">
+          <h3 class="theme-section-title">Custom Colors</h3>
+          <div id="theme-custom" class="theme-custom-grid">
+            <div class="color-field">
+              <label for="color-bg">Background</label>
+              <input type="color" id="color-bg" data-var="bg" />
+            </div>
+            <div class="color-field">
+              <label for="color-bgCard">Cards</label>
+              <input type="color" id="color-bgCard" data-var="bgCard" />
+            </div>
+            <div class="color-field">
+              <label for="color-bgInput">Inputs</label>
+              <input type="color" id="color-bgInput" data-var="bgInput" />
+            </div>
+            <div class="color-field">
+              <label for="color-accent">Accent</label>
+              <input type="color" id="color-accent" data-var="accent" />
+            </div>
+            <div class="color-field">
+              <label for="color-accentHover">Accent Hover</label>
+              <input type="color" id="color-accentHover" data-var="accentHover" />
+            </div>
+            <div class="color-field">
+              <label for="color-text">Text</label>
+              <input type="color" id="color-text" data-var="text" />
+            </div>
+            <div class="color-field">
+              <label for="color-textDim">Text Dim</label>
+              <input type="color" id="color-textDim" data-var="textDim" />
+            </div>
+            <div class="color-field">
+              <label for="color-border">Borders</label>
+              <input type="color" id="color-border" data-var="border" />
+            </div>
+            <div class="color-field">
+              <label for="color-success">Success</label>
+              <input type="color" id="color-success" data-var="success" />
+            </div>
+            <div class="color-field">
+              <label for="color-danger">Danger</label>
+              <input type="color" id="color-danger" data-var="danger" />
+            </div>
+          </div>
+        </section>
+
+        <!-- Actions -->
+        <div class="theme-actions">
+          <button id="theme-reset-btn" class="btn-secondary">Reset to Default</button>
+          <button id="theme-save-btn" class="btn-primary">Save Theme</button>
+        </div>
+      </div>
     </div>
   </div>
 

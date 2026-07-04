@@ -212,6 +212,8 @@ pub fn run() {
             commands::sync_status,
             commands::sync_push,
             commands::sync_pull,
+            commands::copy_to_clipboard_secure,
+            commands::clear_clipboard,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

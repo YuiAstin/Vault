@@ -786,3 +786,83 @@ pub fn sync_pull(state: State<'_, Arc<AppState>>) -> Result<String, String> {
 
     Ok("Pulled from sync folder — please unlock with your password".to_string())
 }
+
+#[tauri::command]
+pub fn copy_to_clipboard_secure(text: String) -> Result<(), String> {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
+    };
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+    use windows::core::HSTRING;
+
+    unsafe {
+        // Open clipboard
+        OpenClipboard(None).map_err(|e| format!("OpenClipboard failed: {}", e))?;
+
+        EmptyClipboard().map_err(|e| {
+            let _ = CloseClipboard();
+            format!("EmptyClipboard failed: {}", e)
+        })?;
+
+        // Write the text as CF_UNICODETEXT (format 13)
+        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let byte_len = wide.len() * 2;
+
+        let hmem = GlobalAlloc(GMEM_MOVEABLE, byte_len).map_err(|e| {
+            let _ = CloseClipboard();
+            format!("GlobalAlloc failed: {}", e)
+        })?;
+
+        let ptr = GlobalLock(hmem) as *mut u8;
+        if ptr.is_null() {
+            let _ = CloseClipboard();
+            return Err("GlobalLock returned null".to_string());
+        }
+        std::ptr::copy_nonoverlapping(wide.as_ptr() as *const u8, ptr, byte_len);
+        let _ = GlobalUnlock(hmem);
+
+        // CF_UNICODETEXT = 13
+        SetClipboardData(13, Some(HANDLE(hmem.0))).map_err(|e| {
+            let _ = CloseClipboard();
+            format!("SetClipboardData (text) failed: {}", e)
+        })?;
+
+        // Now set the ExcludeClipboardContentFromMonitorProcessing flag.
+        // This is a custom format name recognized by Windows 10+ clipboard history.
+        let format_name = HSTRING::from("ExcludeClipboardContentFromMonitorProcessing");
+        let exclude_format = RegisterClipboardFormatW(&format_name);
+        if exclude_format != 0 {
+            // Allocate a minimal buffer (value doesn't matter, just the format's presence)
+            let flag_mem = GlobalAlloc(GMEM_MOVEABLE, 1).map_err(|e| {
+                let _ = CloseClipboard();
+                format!("GlobalAlloc (flag) failed: {}", e)
+            })?;
+
+            let flag_ptr = GlobalLock(flag_mem) as *mut u8;
+            if !flag_ptr.is_null() {
+                *flag_ptr = 0;
+                let _ = GlobalUnlock(flag_mem);
+            }
+
+            // If this fails, we still have the text on clipboard — not fatal
+            let _ = SetClipboardData(exclude_format, Some(HANDLE(flag_mem.0)));
+        }
+
+        let _ = CloseClipboard();
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn clear_clipboard() -> Result<(), String> {
+    use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard};
+
+    unsafe {
+        OpenClipboard(None).map_err(|e| format!("OpenClipboard failed: {}", e))?;
+        let _ = EmptyClipboard();
+        let _ = CloseClipboard();
+    }
+    Ok(())
+}

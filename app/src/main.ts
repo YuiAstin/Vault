@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { PRESETS, loadSavedTheme, saveTheme, applyTheme, createCustomTheme, type ThemeConfig, type ThemeColors } from "./theme";
 
 // --- State ---
 let currentEntryId: string | null = null;
@@ -11,6 +12,7 @@ const authScreen = document.getElementById("auth-screen")!;
 const vaultScreen = document.getElementById("vault-screen")!;
 const addScreen = document.getElementById("add-screen")!;
 const editScreen = document.getElementById("edit-screen")!;
+const themeScreen = document.getElementById("theme-screen")!;
 const detailPanel = document.getElementById("detail-panel")!;
 
 const authForm = document.getElementById("auth-form") as HTMLFormElement;
@@ -29,7 +31,7 @@ const entryPasswordInput = document.getElementById("entry-password") as HTMLInpu
 
 // --- Screens ---
 function showScreen(screen: HTMLElement) {
-  [authScreen, vaultScreen, addScreen, editScreen].forEach((s) => s.classList.remove("active"));
+  [authScreen, vaultScreen, addScreen, editScreen, themeScreen].forEach((s) => s.classList.remove("active"));
   screen.classList.add("active");
 }
 
@@ -47,13 +49,19 @@ function toast(msg: string) {
 
 // --- Clipboard ---
 async function copyToClipboard(text: string) {
-  await navigator.clipboard.writeText(text);
+  try {
+    await invoke("copy_to_clipboard_secure", { text });
+  } catch {
+    // Fallback to web API if Rust command fails
+    await navigator.clipboard.writeText(text);
+  }
   toast("Copied to clipboard");
-  // Auto-clear after 15s
+  // Auto-clear after 15s via Rust (no browser permission needed)
   setTimeout(async () => {
-    const current = await navigator.clipboard.readText();
-    if (current === text) {
-      await navigator.clipboard.writeText("");
+    try {
+      await invoke("clear_clipboard");
+    } catch {
+      // Silent fail — clipboard may have been overwritten by user
     }
   }, 15000);
 }
@@ -712,4 +720,97 @@ window.addEventListener("focus", async () => {
   if (unlocked) {
     await loadEntries();
   }
+});
+
+// --- Theme System ---
+let currentTheme: ThemeConfig = loadSavedTheme();
+applyTheme(currentTheme);
+
+function renderThemePresets() {
+  const container = document.getElementById("theme-presets")!;
+  container.innerHTML = PRESETS.map((preset) => {
+    const isActive = currentTheme.id === preset.id;
+    return `
+      <div class="theme-preset-card${isActive ? " active" : ""}" data-theme-id="${preset.id}">
+        <div class="preview">
+          <div class="preview-swatch" style="background:${preset.colors.bg}"></div>
+          <div class="preview-swatch" style="background:${preset.colors.bgCard}"></div>
+          <div class="preview-swatch" style="background:${preset.colors.accent}"></div>
+          <div class="preview-swatch" style="background:${preset.colors.text}"></div>
+        </div>
+        <span class="preset-name">${preset.name}</span>
+      </div>`;
+  }).join("");
+
+  container.querySelectorAll(".theme-preset-card").forEach((card) => {
+    card.addEventListener("click", () => {
+      const id = (card as HTMLElement).dataset.themeId!;
+      const preset = PRESETS.find((p) => p.id === id);
+      if (preset) {
+        currentTheme = { ...preset };
+        applyTheme(currentTheme);
+        syncColorInputs();
+        renderThemePresets();
+      }
+    });
+  });
+}
+
+function syncColorInputs() {
+  const fields: Array<keyof ThemeColors> = [
+    "bg", "bgCard", "bgInput", "accent", "accentHover",
+    "text", "textDim", "border", "success", "danger",
+  ];
+  fields.forEach((key) => {
+    const input = document.getElementById(`color-${key}`) as HTMLInputElement | null;
+    if (input) {
+      input.value = currentTheme.colors[key];
+    }
+  });
+}
+
+function initThemeScreen() {
+  renderThemePresets();
+  syncColorInputs();
+
+  // Color picker change handlers
+  document.querySelectorAll("#theme-custom input[type='color']").forEach((input) => {
+    input.addEventListener("input", (e) => {
+      const el = e.target as HTMLInputElement;
+      const varName = el.dataset.var as keyof ThemeColors;
+      if (varName) {
+        currentTheme = createCustomTheme(currentTheme, { [varName]: el.value });
+        applyTheme(currentTheme);
+        renderThemePresets(); // deselect presets since it's now custom
+      }
+    });
+  });
+}
+
+// Theme button opens theme screen
+document.getElementById("theme-btn")!.addEventListener("click", () => {
+  initThemeScreen();
+  showScreen(themeScreen);
+});
+
+// Back button
+document.getElementById("theme-back-btn")!.addEventListener("click", () => {
+  showScreen(vaultScreen);
+});
+
+// Save button
+document.getElementById("theme-save-btn")!.addEventListener("click", () => {
+  saveTheme(currentTheme);
+  toast("Theme saved");
+  showScreen(vaultScreen);
+});
+
+// Reset button
+document.getElementById("theme-reset-btn")!.addEventListener("click", () => {
+  currentTheme = { ...PRESETS[0] };
+  applyTheme(currentTheme);
+  saveTheme(currentTheme);
+  syncColorInputs();
+  renderThemePresets();
+  toast("Theme reset to default");
 });
