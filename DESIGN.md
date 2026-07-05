@@ -140,79 +140,25 @@ vault/
 
 ## TODO
 
-### Priority 1 — Core UX
-- [x] Edit existing entries (currently can only add/delete)
-- [x] Categories/folders for organizing entries
-- [x] Favicon/icon fetch for entries (from URL)
-- [x] Entry sorting options (name, date added, most used)
-- [x] Vault backup/export (encrypted file you can move)
-- [x] Import from CSV (Bitwarden/Chrome/Firefox export format)
-
-### Priority 2 — Security
-- [x] Auto-lock after N minutes of inactivity
-- [x] System tray — minimize to tray instead of closing
-- [x] Lock on Windows lock screen (WTS session change)
-- [x] Master password strength meter on creation
-- [x] Breach check (Have I Been Pwned API for passwords)
-- [x] Vault integrity check on load (detect corruption)
-
-### Priority 3 — Browser Extension
-- [x] Chrome Manifest V3 extension skeleton
-- [x] Local API server in Tauri (localhost:7890, auth token)
-- [x] Extension popup — list entries matching current domain
-- [x] Click-to-fill (user picks entry, extension fills form)
-- [x] Auto-detect login forms (heuristic: email/password input pairs)
-- [x] Auto-save prompt (detect new credentials on form submit)
-- [x] Firefox extension port
-
-### Priority 4 — Desktop Integration
-- [x] Global hotkey (Ctrl+Shift+V) — open quick search, copy password
-- [x] Auto-type (simulate keystrokes for non-browser apps)
-  - *Limitation: Electron apps (Discord, Slack, VS Code) reset focus on window re-entry. Auto-type works best with native Win32 apps. For Electron apps, use clipboard copy or the browser extension.*
-- [ ] Windows Hello / biometric unlock option
-- [x] Start on boot (optional, system tray)
-
-### Priority 5 — Sync & Multi-Device
-- [x] Encrypted vault sync via file (Google Drive, OneDrive, USB)
-- [x] Conflict resolution (last-write-wins or merge)
-- [ ] Mobile companion (maybe React Native or just encrypted file access)
-
-### Priority 6 — Polish
-- [x] Custom themes (8 presets + fully custom color picker with live preview)
+### UX & Polish
 - [ ] Keyboard navigation (Tab through entries, Enter to copy)
 - [ ] Accessibility (screen reader labels, focus management)
 - [ ] Update checker (GitHub releases)
 - [ ] About/settings page
-
-### Priority 7 — Recovery
-- [ ] Recovery key generated on vault creation (128-bit random, shown once)
-- [ ] User prompted to write it down / print it — never stored in plaintext
-- [ ] Recovery key can unlock vault and set a new master password
-- [ ] Implementation: encrypt the vault key with BOTH the master password AND the recovery key separately (two encrypted copies of the same symmetric key)
-- [ ] "Forgot password?" flow in unlock screen — asks for recovery key instead
-
-### Priority 8 — 2FA / TOTP
-- [x] TOTP code generation (totp-lite crate, RFC 6238 compliant)
-- [x] totp_secret field on entries (optional)
-- [x] Live 2FA code display with countdown timer in detail panel
-- [x] QR code scanning from screen (rqrr + Win32 screen capture)
-- [x] NTP time sync on startup (fetches from Google/Cloudflare/Microsoft, corrects for clock drift)
-- [x] otpauth:// URI parsing (extracts secret automatically)
-- [x] Copy 2FA code button
 - [ ] Drag-to-select QR region overlay (needs multi-page Vite build + Tauri event IPC between windows — `window.close()` doesn't work in Tauri webviews without API access)
 
-### Priority 9 — Extension Improvements
-- [x] Tokenless localhost API (no setup needed, extension auto-connects)
-- [x] Rate-limit guardrail (5 requests/10s, then lockout until pairing)
-- [x] Breach alert UI (shows which entries were exposed before lockout, recommends changing ALL passwords)
-- [x] Pairing challenge (6-digit code shown in app, enter in extension to re-pair)
-- [x] Right-click context menu on entries (Copy Password, Copy Username, Copy 2FA, Open Details)
-- [ ] Passkey/WebAuthn support (requires code-signing cert for Windows credential provider, or Chrome extension monkey-patching)
-
-### Priority 10 — Security Hardening
-- [x] Secure clipboard (Win32 ExcludeClipboardContentFromMonitorProcessing — hidden from Win+V)
+### Security & Auth
 - [ ] Windows Hello / biometric unlock option
 - [ ] Code signing certificate (eliminates SmartScreen warning, enables OS-level credential provider)
+- [ ] Recovery key generated on vault creation (128-bit random, shown once)
+- [ ] Recovery key can unlock vault and set a new master password
+- [ ] "Forgot password?" flow in unlock screen — asks for recovery key instead
+
+### Extension & Integration
+- [ ] Passkey/WebAuthn support (requires code-signing cert for Windows credential provider, or Chrome extension monkey-patching)
+
+### Multi-Device
+- [ ] Mobile companion (maybe React Native or just encrypted file access)
 
 ---
 
