@@ -162,7 +162,92 @@ function renderEntries(entries: typeof allEntries) {
       const id = (el as HTMLElement).dataset.id!;
       showDetail(id);
     });
+    // Right-click context menu
+    el.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const id = (el as HTMLElement).dataset.id!;
+      showEntryContextMenu(e as MouseEvent, id);
+    });
   });
+}
+
+// --- Context Menu ---
+function showEntryContextMenu(e: MouseEvent, entryId: string) {
+  dismissContextMenu();
+
+  const menu = document.createElement("div");
+  menu.id = "entry-context-menu";
+  menu.style.cssText = `
+    position: fixed; z-index: 300;
+    left: ${e.clientX}px; top: ${e.clientY}px;
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 4px 0; min-width: 160px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    font-size: 13px;
+  `;
+
+  const items = [
+    { label: "Copy Password", action: "password" },
+    { label: "Copy Username", action: "username" },
+    { label: "Copy 2FA Code", action: "totp" },
+    { label: "Open Details", action: "detail" },
+  ];
+
+  items.forEach((item) => {
+    const row = document.createElement("div");
+    row.textContent = item.label;
+    row.style.cssText = `
+      padding: 8px 14px; cursor: pointer; color: var(--text);
+      transition: background 0.1s;
+    `;
+    row.addEventListener("mouseenter", () => { row.style.background = "var(--bg-input)"; });
+    row.addEventListener("mouseleave", () => { row.style.background = "transparent"; });
+    row.addEventListener("click", async () => {
+      dismissContextMenu();
+      await handleContextAction(entryId, item.action);
+    });
+    menu.appendChild(row);
+  });
+
+  document.body.appendChild(menu);
+
+  // Dismiss on click outside
+  setTimeout(() => {
+    document.addEventListener("click", dismissContextMenu, { once: true });
+  }, 0);
+}
+
+function dismissContextMenu() {
+  const existing = document.getElementById("entry-context-menu");
+  if (existing) existing.remove();
+}
+
+async function handleContextAction(entryId: string, action: string) {
+  try {
+    if (action === "detail") {
+      showDetail(entryId);
+      return;
+    }
+
+    const entry: { username: string; password: string; totp_secret: string } = await invoke("get_entry", { id: entryId });
+
+    if (action === "password") {
+      await copyToClipboard(entry.password);
+    } else if (action === "username") {
+      await copyToClipboard(entry.username);
+    } else if (action === "totp") {
+      if (!entry.totp_secret) {
+        toast("No 2FA configured for this entry");
+        return;
+      }
+      const result: { code: string; remaining: number } = await invoke("get_totp_code", { id: entryId });
+      await copyToClipboard(result.code);
+      toast(`2FA code copied (${result.remaining}s remaining)`);
+      return;
+    }
+  } catch (err) {
+    toast("Error: " + String(err));
+  }
 }
 
 // --- Search & Filter ---
@@ -454,6 +539,32 @@ genPwBtn.addEventListener("click", async () => {
   }, 3000);
 });
 
+// Scan QR for TOTP (add form)
+document.getElementById("scan-qr-btn")!.addEventListener("click", async () => {
+  const btn = document.getElementById("scan-qr-btn")!;
+  btn.textContent = "...";
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const win = getCurrentWindow();
+    await win.minimize();
+    await new Promise((r) => setTimeout(r, 600));
+
+    const result: string = await invoke("scan_qr_from_screen");
+    await win.unminimize();
+    await win.setFocus();
+
+    (document.getElementById("entry-totp") as HTMLInputElement).value = result;
+    toast("QR code scanned successfully");
+  } catch (err) {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const win = getCurrentWindow();
+    await win.unminimize();
+    await win.setFocus();
+    toast(String(err));
+  }
+  btn.textContent = "QR";
+});
+
 addForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const name = (document.getElementById("entry-name") as HTMLInputElement).value.trim();
@@ -594,6 +705,32 @@ editGenPwBtn.addEventListener("click", async () => {
   setTimeout(() => {
     editPasswordInput.type = "password";
   }, 3000);
+});
+
+// Scan QR for TOTP (edit form)
+document.getElementById("edit-scan-qr-btn")!.addEventListener("click", async () => {
+  const btn = document.getElementById("edit-scan-qr-btn")!;
+  btn.textContent = "...";
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const win = getCurrentWindow();
+    await win.minimize();
+    await new Promise((r) => setTimeout(r, 600));
+
+    const result: string = await invoke("scan_qr_from_screen");
+    await win.unminimize();
+    await win.setFocus();
+
+    (document.getElementById("edit-entry-totp") as HTMLInputElement).value = result;
+    toast("QR code scanned successfully");
+  } catch (err) {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const win = getCurrentWindow();
+    await win.unminimize();
+    await win.setFocus();
+    toast(String(err));
+  }
+  btn.textContent = "QR";
 });
 
 editForm.addEventListener("submit", async (e) => {

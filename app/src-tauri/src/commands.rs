@@ -11,6 +11,8 @@ pub struct AppState {
     pub master_password: Mutex<Option<String>>,
     pub api_token: Mutex<Option<String>>,
     pub pairing_code: Mutex<Option<String>>,
+    /// Clock offset in seconds (actual_time = system_time + offset)
+    pub time_offset: Mutex<i64>,
 }
 
 #[derive(Serialize)]
@@ -138,11 +140,12 @@ pub fn get_totp_code(id: String, state: State<'_, Arc<AppState>>) -> Result<Totp
         return Err("No TOTP secret configured for this entry".to_string());
     }
 
-    let code = generate_totp(&entry.totp_secret)?;
+    let time_offset = *state.time_offset.lock().unwrap();
+    let code = generate_totp(&entry.totp_secret, time_offset)?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_secs();
+        .as_secs() as i64 + time_offset;
     let remaining = 30 - (now % 30) as u8;
 
     Ok(TotpResponse { code, remaining })
@@ -155,10 +158,8 @@ pub struct TotpResponse {
 }
 
 /// Generate a TOTP code from a base32-encoded secret or an otpauth:// URI.
-fn generate_totp(secret_input: &str) -> Result<String, String> {
-    use data_encoding::BASE32_NOPAD;
-    use hmac::{Hmac, Mac};
-    use sha1::Sha1;
+fn generate_totp(secret_input: &str, time_offset: i64) -> Result<String, String> {
+    use data_encoding::BASE32;
 
     // Extract secret from otpauth:// URI if needed
     let secret_b32 = if secret_input.starts_with("otpauth://") {
@@ -167,52 +168,53 @@ fn generate_totp(secret_input: &str) -> Result<String, String> {
         secret_input.to_string()
     };
 
-    // Clean the secret: remove spaces, uppercase, strip padding
+    // Clean the secret: remove spaces, dashes, uppercase, strip padding
     let cleaned: String = secret_b32
         .chars()
-        .filter(|c| !c.is_whitespace() && *c != '=')
+        .filter(|c| !c.is_whitespace() && *c != '=' && *c != '-')
         .collect::<String>()
         .to_uppercase();
 
-    let secret = BASE32_NOPAD
-        .decode(cleaned.as_bytes())
+    // Pad to valid base32 length (multiple of 8)
+    let padded = {
+        let remainder = cleaned.len() % 8;
+        if remainder == 0 {
+            cleaned.clone()
+        } else {
+            let pad_count = 8 - remainder;
+            format!("{}{}", cleaned, "=".repeat(pad_count))
+        }
+    };
+
+    let secret = BASE32.decode(padded.as_bytes())
         .map_err(|e| format!("Invalid TOTP secret (bad base32): {}", e))?;
 
-    // Get current time step
+    // Get corrected time (system time + NTP offset)
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_secs();
-    let counter: u64 = now / 30;
-    let counter_bytes = counter.to_be_bytes();
+        .as_secs() as i64 + time_offset;
 
-    // HMAC-SHA1
-    type HmacSha1 = Hmac<Sha1>;
-    let mut mac = HmacSha1::new_from_slice(&secret)
-        .map_err(|_| "HMAC key error".to_string())?;
-    mac.update(&counter_bytes);
-    let result = mac.finalize().into_bytes();
+    // Use totp-lite for correct code generation
+    let code = totp_lite::totp_custom::<totp_lite::Sha1>(30, 6, &secret, now as u64);
 
-    // Dynamic truncation
-    let offset = (result[19] & 0x0f) as usize;
-    let code_bytes: u32 = ((result[offset] as u32 & 0x7f) << 24)
-        | ((result[offset + 1] as u32) << 16)
-        | ((result[offset + 2] as u32) << 8)
-        | (result[offset + 3] as u32);
-
-    let code = code_bytes % 1_000_000;
-    Ok(format!("{:06}", code))
+    Ok(code)
 }
 
 /// Extract the secret parameter from an otpauth:// URI.
 fn extract_secret_from_uri(uri: &str) -> Result<String, String> {
     // otpauth://totp/Label?secret=BASE32SECRET&issuer=Example
+    // The secret might be URL-encoded (unlikely for base32, but handle %XX just in case)
     uri.split('?')
         .nth(1)
         .and_then(|query| {
             query.split('&')
                 .find(|p| p.to_lowercase().starts_with("secret="))
-                .map(|p| p.splitn(2, '=').nth(1).unwrap_or("").to_string())
+                .map(|p| {
+                    let raw = p.splitn(2, '=').nth(1).unwrap_or("");
+                    // URL-decode (base32 chars are safe, but handle edge cases)
+                    raw.replace("%3D", "=").replace("%3d", "=")
+                })
         })
         .ok_or_else(|| "Invalid otpauth URI: no secret parameter found".to_string())
 }
@@ -565,6 +567,125 @@ pub fn clear_pairing_code(state: State<'_, Arc<AppState>>) -> Result<(), String>
     let mut guard = state.pairing_code.lock().unwrap();
     *guard = None;
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub fn scan_qr_from_screen() -> Result<String, String> {
+    use windows::Win32::Graphics::Gdi::{
+        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
+        GetDIBits, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
+        SRCCOPY, GetDC,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+
+    unsafe {
+        let width = GetSystemMetrics(SM_CXSCREEN);
+        let height = GetSystemMetrics(SM_CYSCREEN);
+
+        if width == 0 || height == 0 {
+            return Err("Failed to get screen dimensions".to_string());
+        }
+
+        // Get screen DC
+        let screen_dc = GetDC(None);
+        if screen_dc.is_invalid() {
+            return Err("Failed to get screen DC".to_string());
+        }
+
+        // Create compatible DC and bitmap for full screen
+        let mem_dc = CreateCompatibleDC(Some(screen_dc));
+        let bitmap = CreateCompatibleBitmap(screen_dc, width, height);
+        let old_bitmap = SelectObject(mem_dc, bitmap.into());
+
+        // Capture entire screen
+        let _ = BitBlt(mem_dc, 0, 0, width, height, Some(screen_dc), 0, 0, SRCCOPY);
+
+        // Prepare bitmap info
+        let mut bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width,
+                biHeight: -height, // top-down
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                biSizeImage: 0,
+                biXPelsPerMeter: 0,
+                biYPelsPerMeter: 0,
+                biClrUsed: 0,
+                biClrImportant: 0,
+            },
+            bmiColors: [Default::default()],
+        };
+
+        let pixel_count = (width * height) as usize;
+        let mut pixels: Vec<u8> = vec![0u8; pixel_count * 4];
+
+        let result = GetDIBits(
+            mem_dc,
+            bitmap,
+            0,
+            height as u32,
+            Some(pixels.as_mut_ptr() as *mut _),
+            &mut bmi,
+            DIB_RGB_COLORS,
+        );
+
+        // Clean up GDI
+        SelectObject(mem_dc, old_bitmap);
+        DeleteObject(bitmap.into());
+        DeleteDC(mem_dc);
+        windows::Win32::Graphics::Gdi::ReleaseDC(None, screen_dc);
+
+        if result == 0 {
+            return Err("Failed to capture screen pixels".to_string());
+        }
+
+        // Convert BGRA to grayscale
+        let mut gray_pixels: Vec<u8> = Vec::with_capacity(pixel_count);
+        for i in 0..pixel_count {
+            let b = pixels[i * 4] as u32;
+            let g = pixels[i * 4 + 1] as u32;
+            let r = pixels[i * 4 + 2] as u32;
+            let gray = ((r * 299 + g * 587 + b * 114) / 1000) as u8;
+            gray_pixels.push(gray);
+        }
+
+        // Decode QR
+        let mut img = rqrr::PreparedImage::prepare_from_greyscale(
+            width as usize,
+            height as usize,
+            |x, y| gray_pixels[y * width as usize + x],
+        );
+
+        let grids = img.detect_grids();
+        if grids.is_empty() {
+            return Err("No QR code found on screen. Make sure it's fully visible.".to_string());
+        }
+
+        for grid in grids {
+            match grid.decode() {
+                Ok((_meta, content)) => {
+                    // If it's an otpauth URI, extract just the secret
+                    if content.starts_with("otpauth://") {
+                        if let Some(secret) = content.split('?').nth(1)
+                            .and_then(|q| q.split('&')
+                                .find(|p| p.to_lowercase().starts_with("secret="))
+                                .map(|p| p.splitn(2, '=').nth(1).unwrap_or("").to_string()))
+                        {
+                            return Ok(secret);
+                        }
+                        return Err("QR contains otpauth URI but no secret parameter".to_string());
+                    }
+                    return Ok(content);
+                }
+                Err(_) => continue,
+            }
+        }
+
+        Err("QR code detected but could not be decoded".to_string())
+    }
 }
 
 #[cfg(target_os = "windows")]

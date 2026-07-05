@@ -187,7 +187,10 @@
         </div>
         <div class="form-field">
           <label for="entry-totp">TOTP Secret (optional)</label>
-          <input type="text" id="entry-totp" placeholder="Base32 secret or otpauth:// URI" />
+          <div class="password-input-group">
+            <input type="text" id="entry-totp" placeholder="Base32 secret or otpauth:// URI" />
+            <button type="button" id="scan-qr-btn" title="Scan QR from screen">QR</button>
+          </div>
         </div>
         <button type="submit" class="btn-primary">Save Entry</button>
       </form>
@@ -233,7 +236,10 @@
         </div>
         <div class="form-field">
           <label for="edit-entry-totp">TOTP Secret (optional)</label>
-          <input type="text" id="edit-entry-totp" placeholder="Base32 secret or otpauth:// URI" />
+          <div class="password-input-group">
+            <input type="text" id="edit-entry-totp" placeholder="Base32 secret or otpauth:// URI" />
+            <button type="button" id="edit-scan-qr-btn" title="Scan QR from screen">QR</button>
+          </div>
         </div>
         <button type="submit" class="btn-primary">Save Changes</button>
       </form>

@@ -14,6 +14,45 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
+/// Fetch actual UTC time from an HTTP server and compute offset from system clock.
+/// Returns the offset in seconds: actual_time = system_time + offset
+fn sync_time_offset() -> Result<i64, String> {
+    use std::time::SystemTime;
+
+    // Try multiple time sources
+    let urls = [
+        "https://www.google.com",
+        "https://www.cloudflare.com",
+        "https://www.microsoft.com",
+    ];
+
+    for url in urls {
+        if let Ok(response) = reqwest::blocking::Client::new()
+            .head(url)
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+        {
+            if let Some(date_header) = response.headers().get("date") {
+                if let Ok(date_str) = date_header.to_str() {
+                    // Parse HTTP date: "Sat, 05 Jul 2026 14:30:00 GMT"
+                    if let Ok(server_time) = chrono::DateTime::parse_from_rfc2822(date_str) {
+                        let server_unix = server_time.timestamp();
+                        let system_unix = SystemTime::now()
+                            .duration_since(SystemTime::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs() as i64;
+                        let offset = server_unix - system_unix;
+                        return Ok(offset);
+                    }
+                }
+            }
+        }
+    }
+
+    // If all sources fail, assume clock is correct
+    Ok(0)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Create shared state as Arc so the API server thread can access it
@@ -22,6 +61,7 @@ pub fn run() {
         master_password: Mutex::new(None),
         api_token: Mutex::new(None),
         pairing_code: Mutex::new(None),
+        time_offset: Mutex::new(0),
     });
 
     let api_state = shared_state.clone();
@@ -30,8 +70,17 @@ pub fn run() {
         .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .manage(shared_state)
+        .manage(shared_state.clone())
         .setup(move |app| {
+            // Sync clock offset for TOTP on a background thread
+            let time_state = shared_state.clone();
+            std::thread::spawn(move || {
+                if let Ok(offset) = sync_time_offset() {
+                    *time_state.time_offset.lock().unwrap() = offset;
+                    log::info!("TOTP time offset: {}s", offset);
+                }
+            });
+
             // Start API server for browser extension
             api_server::start_api_server(api_state);
 
@@ -208,6 +257,7 @@ pub fn run() {
             commands::get_pairing_code,
             commands::clear_pairing_code,
             commands::auto_type,
+            commands::scan_qr_from_screen,
             commands::set_start_on_boot,
             commands::get_start_on_boot,
             commands::get_foreground_window_title,
