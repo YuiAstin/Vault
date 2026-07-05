@@ -109,20 +109,32 @@ vault/
 
 ---
 
-## Current Features (v0.1)
+## Current Features (v0.3)
 
 - [x] Create vault with master password
 - [x] Unlock/lock vault
-- [x] Add entries (name, username, password, URL, notes)
-- [x] List entries with search
-- [x] View entry details
-- [x] Copy username/password to clipboard
+- [x] Add/edit/delete entries (name, username, password, URL, notes, category, TOTP)
+- [x] List entries with search, category filter, sort
+- [x] View entry details with copy buttons
+- [x] Copy username/password to clipboard (Win32 secure — hidden from clipboard history)
 - [x] Show/hide password toggle
-- [x] Delete entries
 - [x] Generate strong random passwords
 - [x] Auto-clear clipboard after 15 seconds
-- [x] Dark theme UI
-- [x] Builds to ~9MB native exe (Windows)
+- [x] TOTP 2FA code generation with live countdown
+- [x] QR code screen scan for TOTP setup
+- [x] NTP time sync for accurate TOTP codes
+- [x] Custom themes (8 presets + custom color picker)
+- [x] Browser extension (Chrome/Firefox) with tokenless auto-connect
+- [x] Auto-save prompt on form submit
+- [x] Rate-limit guardrail with breach alert
+- [x] Right-click context menu (Copy Password/Username/2FA)
+- [x] Global hotkey, auto-type, system tray
+- [x] Auto-lock on idle + Windows lock screen
+- [x] Start on boot
+- [x] Encrypted file sync (push/pull to cloud drives)
+- [x] CSV import (Bitwarden/Chrome/Firefox)
+- [x] HIBP breach check (k-Anonymity)
+- [x] Dark theme UI, ~15MB native exe
 
 ---
 
@@ -166,7 +178,7 @@ vault/
 - [ ] Mobile companion (maybe React Native or just encrypted file access)
 
 ### Priority 6 — Polish
-- [ ] Custom themes (light mode option)
+- [x] Custom themes (8 presets + fully custom color picker with live preview)
 - [ ] Keyboard navigation (Tab through entries, Enter to copy)
 - [ ] Accessibility (screen reader labels, focus management)
 - [ ] Update checker (GitHub releases)
@@ -178,6 +190,29 @@ vault/
 - [ ] Recovery key can unlock vault and set a new master password
 - [ ] Implementation: encrypt the vault key with BOTH the master password AND the recovery key separately (two encrypted copies of the same symmetric key)
 - [ ] "Forgot password?" flow in unlock screen — asks for recovery key instead
+
+### Priority 8 — 2FA / TOTP
+- [x] TOTP code generation (totp-lite crate, RFC 6238 compliant)
+- [x] totp_secret field on entries (optional)
+- [x] Live 2FA code display with countdown timer in detail panel
+- [x] QR code scanning from screen (rqrr + Win32 screen capture)
+- [x] NTP time sync on startup (fetches from Google/Cloudflare/Microsoft, corrects for clock drift)
+- [x] otpauth:// URI parsing (extracts secret automatically)
+- [x] Copy 2FA code button
+- [ ] Drag-to-select QR region overlay (needs multi-page Vite build + Tauri event IPC between windows — `window.close()` doesn't work in Tauri webviews without API access)
+
+### Priority 9 — Extension Improvements
+- [x] Tokenless localhost API (no setup needed, extension auto-connects)
+- [x] Rate-limit guardrail (5 requests/10s, then lockout until pairing)
+- [x] Breach alert UI (shows which entries were exposed before lockout, recommends changing ALL passwords)
+- [x] Pairing challenge (6-digit code shown in app, enter in extension to re-pair)
+- [x] Right-click context menu on entries (Copy Password, Copy Username, Copy 2FA, Open Details)
+- [ ] Passkey/WebAuthn support (requires code-signing cert for Windows credential provider, or Chrome extension monkey-patching)
+
+### Priority 10 — Security Hardening
+- [x] Secure clipboard (Win32 ExcludeClipboardContentFromMonitorProcessing — hidden from Win+V)
+- [ ] Windows Hello / biometric unlock option
+- [ ] Code signing certificate (eliminates SmartScreen warning, enables OS-level credential provider)
 
 ---
 
@@ -247,4 +282,4 @@ Requires: `pip install cryptography`
 
 ---
 
-*Last updated: 2026-07-03*
+*Last updated: 2026-07-05*
